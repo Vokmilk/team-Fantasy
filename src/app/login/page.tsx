@@ -1,63 +1,203 @@
 'use client'
 
-import { login, signup, resetPassword } from '@/app/actions' // Убедись, что путь верный
+import { login, resetPassword, signup } from '@/app/actions'
 import { useState } from 'react'
 
 export default function LoginPage() {
-  const [isReset, setIsReset] = useState(false)
-  const [message, setMessage] = useState('')
+	// Добавили режим 'reset'
+	const [mode, setMode] = useState<'login' | 'signup' | 'reset'>('login')
+	const [message, setMessage] = useState('')
+	const [isSuccess, setIsSuccess] = useState(false) // Чтобы красить сообщение в зеленый
 
-  // Обертка для входа
-  const handleLogin = async (formData: FormData) => {
-    const result = await login(formData)
-    if (result?.error) {
-      setMessage(result.error)
-    }
-  }
+	const handleSubmit = async (formData: FormData) => {
+		setMessage('')
+		setIsSuccess(false)
 
-  // Обертка для регистрации
-  const handleSignup = async (formData: FormData) => {
-    const result = await signup(formData)
-    if (result?.error) {
-      setMessage(result.error)
-    }
-  }
+		// Логика для восстановления пароля
+		if (mode === 'reset') {
+			const email = formData.get('email') as string
+			const res = await resetPassword(email)
 
-  if (isReset) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-900 text-white">
-        <form action={async (fd) => {
-            const res = await resetPassword(fd.get('email') as string)
-            setMessage(res.success ? 'Проверьте почту' : 'Ошибка: ' + res.error)
-        }} className="flex flex-col gap-4 w-80">
-          <h1 className="text-2xl font-bold">Восстановление</h1>
-          <input name="email" placeholder="Email" className="p-2 rounded bg-gray-800 border border-gray-700" required />
-          <button className="bg-blue-600 p-2 rounded hover:bg-blue-700">Сбросить пароль</button>
-          <button type="button" onClick={() => setIsReset(false)} className="text-sm text-gray-400 underline">Назад</button>
-          {message && <p className="text-red-400 text-sm text-center">{message}</p>}
-        </form>
-      </div>
-    )
-  }
+			if (res.success) {
+				setIsSuccess(true)
+				setMessage('Ссылка для сброса отправлена на ваш Email.')
+			} else {
+				setMessage(res.error || 'Ошибка при отправке')
+			}
+			return
+		}
 
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-900 text-white">
-      <form className="flex flex-col gap-4 w-80 border p-6 rounded-lg border-gray-700">
-        <h1 className="text-2xl font-bold text-center">Fantasy League</h1>
-        <input name="email" type="email" placeholder="Email" className="p-2 rounded bg-gray-800 border border-gray-700" required />
-        <input name="password" type="password" placeholder="Пароль" className="p-2 rounded bg-gray-800 border border-gray-700" required />
-        
-        {/* Используем обертки handleLogin и handleSignup */}
-        <button formAction={handleLogin} className="bg-green-600 p-2 rounded hover:bg-green-700 transition">Войти</button>
-        <button formAction={handleSignup} className="bg-gray-700 p-2 rounded hover:bg-gray-600 transition">Регистрация</button>
-        
-        <button type="button" onClick={() => setIsReset(true)} className="text-sm text-center text-gray-400 hover:text-white">
-          Забыли пароль?
-        </button>
-        
-        {/* Отображение ошибок */}
-        {message && <p className="text-red-500 text-sm text-center mt-2">{message}</p>}
-      </form>
-    </div>
-  )
+		// Логика для Входа и Регистрации
+		const action = mode === 'login' ? login : signup
+		const res = await action(formData)
+		if (res?.error) setMessage(res.error)
+	}
+
+	// Заголовок формы
+	const getTitle = () => {
+		if (mode === 'login') return 'Вход'
+		if (mode === 'signup') return 'Регистрация'
+		return 'Восстановление'
+	}
+
+	return (
+		<div className='flex min-h-screen items-center justify-center bg-gray-950 text-white'>
+			<form
+				action={handleSubmit}
+				className='flex flex-col gap-4 w-96 border border-gray-800 p-8 rounded-xl bg-gray-900 shadow-2xl'
+			>
+				<h1 className='text-3xl font-bold text-center mb-4 bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent'>
+					{getTitle()}
+				</h1>
+
+				{/* --- ПОЛЯ ДЛЯ РЕГИСТРАЦИИ --- */}
+				{mode === 'signup' && (
+					<input
+						name='username'
+						placeholder='Никнейм (Username)'
+						className='input-dark'
+						required
+					/>
+				)}
+
+				{/* --- ПОЛЯ ДЛЯ ВХОДА --- */}
+				{mode === 'login' && (
+					<>
+						<input
+							name='login'
+							placeholder='Email или Username'
+							className='input-dark'
+							required
+						/>
+						<input
+							name='password'
+							type='password'
+							placeholder='Пароль'
+							className='input-dark'
+							required
+						/>
+						<div className='text-right'>
+							<button
+								type='button'
+								onClick={() => {
+									setMode('reset')
+									setMessage('')
+								}}
+								className='text-xs text-blue-400 hover:text-blue-300'
+							>
+								Забыли пароль?
+							</button>
+						</div>
+					</>
+				)}
+
+				{/* --- ПОЛЯ ДЛЯ РЕГИСТРАЦИИ (Email нужен отдельно) --- */}
+				{mode === 'signup' && (
+					<>
+						<input
+							name='email'
+							type='email'
+							placeholder='Email'
+							className='input-dark'
+							required
+						/>
+						<input
+							name='password'
+							type='password'
+							placeholder='Пароль'
+							className='input-dark'
+							required
+						/>
+					</>
+				)}
+
+				{/* --- ПОЛЯ ДЛЯ СБРОСА ПАРОЛЯ --- */}
+				{mode === 'reset' && (
+					<>
+						<p className='text-sm text-gray-400 text-center'>
+							Введите email, указанный при регистрации. Мы отправим ссылку для
+							сброса.
+						</p>
+						<input
+							name='email'
+							type='email'
+							placeholder='Ваш Email'
+							className='input-dark'
+							required
+						/>
+					</>
+				)}
+
+				{/* --- КНОПКА ОТПРАВКИ --- */}
+				<button className='bg-blue-600 py-3 rounded-lg font-bold hover:bg-blue-500 transition shadow-lg shadow-blue-900/20 mt-2'>
+					{mode === 'login'
+						? 'Войти'
+						: mode === 'signup'
+						? 'Создать аккаунт'
+						: 'Сбросить пароль'}
+				</button>
+
+				{/* --- ПЕРЕКЛЮЧЕНИЕ РЕЖИМОВ --- */}
+				<div className='text-center text-gray-400 text-sm mt-4 space-y-2'>
+					{mode === 'login' && (
+						<p>
+							Нет аккаунта?
+							<button
+								type='button'
+								onClick={() => {
+									setMode('signup')
+									setMessage('')
+								}}
+								className='text-blue-400 ml-2 hover:underline'
+							>
+								Зарегистрироваться
+							</button>
+						</p>
+					)}
+
+					{mode === 'signup' && (
+						<p>
+							Уже есть аккаунт?
+							<button
+								type='button'
+								onClick={() => {
+									setMode('login')
+									setMessage('')
+								}}
+								className='text-blue-400 ml-2 hover:underline'
+							>
+								Войти
+							</button>
+						</p>
+					)}
+
+					{mode === 'reset' && (
+						<button
+							type='button'
+							onClick={() => {
+								setMode('login')
+								setMessage('')
+							}}
+							className='text-gray-500 hover:text-white underline'
+						>
+							Вернуться ко входу
+						</button>
+					)}
+				</div>
+
+				{/* --- СООБЩЕНИЯ ОБ ОШИБКАХ/УСПЕХЕ --- */}
+				{message && (
+					<div
+						className={`p-3 border rounded text-sm text-center ${
+							isSuccess
+								? 'bg-green-900/50 border-green-800 text-green-200'
+								: 'bg-red-900/50 border-red-800 text-red-200'
+						}`}
+					>
+						{message}
+					</div>
+				)}
+			</form>
+		</div>
+	)
 }

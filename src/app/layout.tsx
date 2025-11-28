@@ -1,7 +1,14 @@
+import { Navigation } from '@/components/Navigation'
 import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
 import { signOut } from './actions'
-import './globals.css'
+import './globals.css' 
+
+// Метаданные (по желанию)
+export const metadata = {
+	title: 'Fantasy League',
+	description: 'Фентези турнир',
+}
 
 export default async function RootLayout({
 	children,
@@ -9,32 +16,45 @@ export default async function RootLayout({
 	children: React.ReactNode
 }) {
 	const supabase = await createClient()
+
+	// Проверяем сессию один раз на входе
 	const {
 		data: { user },
 	} = await supabase.auth.getUser()
 
 	return (
 		<html lang='ru'>
-			<body className='bg-gray-950 text-gray-100 min-h-screen'>
+			<body className='bg-gray-950 text-gray-100 min-h-screen flex flex-col'>
 				{user && (
-					<nav className='border-b border-gray-800 p-4 flex gap-6 items-center justify-center bg-gray-900'>
-						<Link href='/' className='hover:text-blue-400 font-medium'>
-							Мой Кабинет
-						</Link>
-						<Link href='/picks' className='hover:text-blue-400 font-medium'>
-							Все выборы
-						</Link>
-						<Link href='/stats' className='hover:text-blue-400 font-medium'>
-							Статистика
-						</Link>
-						<form action={signOut}>
-							<button className='text-red-400 text-sm hover:text-red-300 ml-4'>
-								Выйти
-							</button>
-						</form>
-					</nav>
+					<header className='border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50'>
+						<div className='container mx-auto px-4 py-3 flex flex-col md:flex-row items-center justify-between gap-4'>
+							{/* Логотип */}
+							<Link
+								href='/'
+								className='text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent hover:opacity-80 transition'
+							>
+								Fantasy League
+							</Link>
+
+							{/* Навигация (Клиентский компонент) */}
+							<Navigation />
+
+							{/* Кнопка выхода */}
+							<form action={signOut}>
+								<button className='text-xs font-medium text-red-400 hover:text-red-300 border border-red-900/30 hover:bg-red-900/20 px-3 py-1.5 rounded transition'>
+									Выйти
+								</button>
+							</form>
+						</div>
+					</header>
 				)}
-				<main className='container mx-auto p-4'>{children}</main>
+
+				<main className='container mx-auto p-4 md:p-6 flex-1'>{children}</main>
+
+				{/* Футер (опционально) */}
+				<footer className='border-t border-gray-900 p-6 text-center text-gray-600 text-sm mt-auto'>
+					&copy; {new Date().getFullYear()} Fantasy League
+				</footer>
 			</body>
 		</html>
 	)
