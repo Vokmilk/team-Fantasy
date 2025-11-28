@@ -254,3 +254,24 @@ export async function toggleBingoEvent(
 
 	revalidatePath('/bingo')
 }
+
+
+export async function removeSelection(playerId: number) {
+  const supabase = await createClient()
+  
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Unauthorized')
+
+  // Удаляем конкретный выбор
+  const { error } = await supabase
+    .from('selections')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('player_id', playerId)
+
+  if (error) throw new Error(error.message)
+
+  revalidatePath('/')
+  revalidatePath('/picks')
+  revalidatePath('/stats')
+}

@@ -7,6 +7,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
 	matcher: [
-		'/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+		// Мы добавили '|api' в список исключений (где не надо запускать middleware)
+		// Теперь строка выглядит так: (?!_next/static|_next/image|favicon.ico|api|...
+		'/((?!_next/static|_next/image|favicon.ico|api|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
 	],
 }

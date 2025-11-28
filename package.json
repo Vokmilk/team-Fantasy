@@ -9,11 +9,15 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^141.0.0",
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.84.0",
+    "axios": "^1.13.2",
+    "cheerio": "^1.1.2",
     "dotenv": "^17.2.3",
     "lucide-react": "^0.554.0",
     "next": "16.0.3",
+    "puppeteer-core": "^24.31.0",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },

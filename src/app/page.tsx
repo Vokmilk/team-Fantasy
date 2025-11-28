@@ -97,7 +97,7 @@ export default async function Dashboard() {
 							</span>
 						</div>
 
-						<div className='p-2 space-y-2 flex-1 overflow-y-auto max-h-[600px] scrollbar-thin scrollbar-thumb-gray-700'>
+						<div className='p-2 space-y-2 flex-1  scrollbar-thin scrollbar-thumb-gray-700'>
 							{basket.players
 								.sort((a, b) => b.cost - a.cost)
 								.map(player => {
