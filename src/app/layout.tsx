@@ -2,7 +2,7 @@ import { Navigation } from '@/components/Navigation'
 import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
 import { signOut } from './actions'
-import './globals.css' 
+import './globals.css'
 
 // Метаданные (по желанию)
 export const metadata = {
@@ -22,6 +22,17 @@ export default async function RootLayout({
 		data: { user },
 	} = await supabase.auth.getUser()
 
+	let isAdmin = false
+	if (user) {
+		const { data: profile } = await supabase
+			.from('profiles')
+			.select('is_admin')
+			.eq('id', user.id)
+			.single()
+
+		isAdmin = !!profile?.is_admin
+	}
+
 	return (
 		<html lang='ru'>
 			<body className='bg-gray-950 text-gray-100 min-h-screen flex flex-col'>
@@ -37,7 +48,7 @@ export default async function RootLayout({
 							</Link>
 
 							{/* Навигация (Клиентский компонент) */}
-							<Navigation />
+							<Navigation isAdmin={isAdmin} />
 
 							{/* Кнопка выхода */}
 							<form action={signOut}>

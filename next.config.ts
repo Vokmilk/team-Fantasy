@@ -1,11 +1,8 @@
-import type { NextConfig } from 'next'
+import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-	/* config options here */
-	reactCompiler: true,
-	experimental: {
-		serverComponentsExternalPackages: ['puppeteer-core', '@sparticuz/chromium'],
-	},
-}
+  /* config options here */
+  reactCompiler: true,
+};
 
-export default nextConfig
+export default nextConfig;

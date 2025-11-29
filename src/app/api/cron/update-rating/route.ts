@@ -1,16 +1,13 @@
-import chromium from '@sparticuz/chromium'
 import { createClient } from '@supabase/supabase-js'
+import * as cheerio from 'cheerio'
 import { NextResponse } from 'next/server'
-import puppeteer from 'puppeteer-core'
 
-// Пытаемся запросить максимум времени (на Hobby тарифе это все равно часто 10-15 сек)
-export const maxDuration = 60
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 export async function GET(request: Request) {
-	console.log('1. Cron job started') // ЛОГ 1
-
 	try {
+		// 1. Проверка Cron Secret
 		const authHeader = request.headers.get('authorization')
 		if (
 			authHeader !== `Bearer ${process.env.CRON_SECRET}` &&
@@ -19,102 +16,119 @@ export async function GET(request: Request) {
 			return new NextResponse('Unauthorized', { status: 401 })
 		}
 
-		console.log('2. Launching Browser...') // ЛОГ 2
-		let browser
-		if (process.env.NODE_ENV === 'production') {
-			// Настройка для Vercel
-			browser = await puppeteer.launch({
-				args: chromium.args,
-				defaultViewport: { width: 1920, height: 1080 },
-				executablePath: await chromium.executablePath(),
-				headless: true,
-			})
-		} else {
-			return NextResponse.json({ message: 'Skipping local run for now' })
-		}
+		const TARGET_URL = 'https://mediagame.by/rating'
+		const USER_AGENT =
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-		const page = await browser.newPage()
-		console.log('3. Navigating to page...') // ЛОГ 3
+		console.log('1. Starting Handshake...')
 
-		// Уменьшаем таймаут загрузки, чтобы быстрее падать если сайт висит
-		await page.goto('https://mediagame.by/rating', {
-			waitUntil: 'domcontentloaded',
-			timeout: 15000,
+		// Шаг 1: Получаем куки (рукопожатие)
+		const response1 = await fetch(TARGET_URL, {
+			headers: { 'User-Agent': USER_AGENT },
 		})
 
-		console.log('4. Selecting 100 items...') // ЛОГ 4
-		const selectSelector = 'select[name="DataTables_Table_0_length"]'
-		await page.waitForSelector(selectSelector, { timeout: 5000 })
-		await page.select(selectSelector, '100')
+		// Собираем куки
+		const rawCookies = response1.headers.getSetCookie()
+		const cookieHeader = rawCookies.map(c => c.split(';')[0]).join('; ')
+		console.log('Cookies obtained:', cookieHeader ? 'Yes' : 'No')
 
-		console.log('5. Waiting for table update...') // ЛОГ 5
-		// Ждем обновления таблицы
-		await page.waitForFunction(
-			() => {
-				const rows = document.querySelectorAll('#DataTables_Table_0 tbody tr')
-				return rows.length > 25
-			},
-			{ timeout: 8000 }
+		// Шаг 2: Запрашиваем ПОЛНУЮ таблицу (length=300 с запасом)
+		console.log('2. Fetching full table...')
+		const response2 = await fetch(
+			`${TARGET_URL}?DataTables_Table_0_length=300`,
+			{
+				headers: {
+					'User-Agent': USER_AGENT,
+					Cookie: cookieHeader,
+					Accept:
+						'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+				},
+			}
 		)
 
-		console.log('6. Parsing data...') // ЛОГ 6
-		const players = await page.evaluate(() => {
-			const rows = Array.from(
-				document.querySelectorAll('#DataTables_Table_0 tbody tr')
-			)
-			return rows
-				.map(row => {
-					const cols = row.querySelectorAll('td')
-					if (cols.length < 5) return null
-					// any типы для простых функций внутри evaluate
-					const cleanNum = (text: any) => parseInt(text?.trim() || '0')
-					const cleanFloat = (text: any) => parseFloat(text?.trim() || '0')
-					const clean = (text: any) => text?.trim() || ''
+		const html = await response2.text()
+		const $ = cheerio.load(html)
 
-					const rank = cleanNum(cols[0].innerText)
-					const name = clean(cols[1].innerText)
-					const rating = cleanNum(cols[2].innerText)
-					const games = cleanNum(cols[3].innerText)
-					const wins = cleanNum(cols[4].innerText)
-					const winRate = cleanFloat(cols[5].innerText.replace('%', ''))
+		// --- ПАРСИНГ ---
+		const rows = $('tbody tr')
+		const players: any[] = []
 
-					if (!rank || !name) return null
+		rows.each((i, row) => {
+			const cols = $(row).find('td')
+			if (cols.length < 5) return
 
-					return {
-						rank,
-						player_name: name,
-						rating,
-						games_played: games,
-						wins,
-						win_rate: winRate,
-						updated_at: new Date().toISOString(),
-					}
+			const cleanNum = (val: any) => parseInt(val?.trim() || '0')
+			const cleanFloat = (val: any) =>
+				parseFloat(val?.replace('%', '').trim() || '0')
+
+			// Имя
+			let name = $(cols[1]).find('a').text().trim()
+			if (!name) name = $(cols[1]).text().trim()
+
+			// Данные
+			const rank = cleanNum($(cols[0]).text())
+			const rating = $(cols[2]).attr('data-sort')
+				? cleanNum($(cols[2]).attr('data-sort'))
+				: cleanNum($(cols[2]).text())
+			const games = $(cols[3]).attr('data-sort')
+				? cleanNum($(cols[3]).attr('data-sort'))
+				: cleanNum($(cols[3]).text())
+			const wins = $(cols[4]).attr('data-sort')
+				? cleanNum($(cols[4]).attr('data-sort'))
+				: cleanNum($(cols[4]).text())
+			const winRate = $(cols[5]).attr('data-sort')
+				? cleanFloat($(cols[5]).attr('data-sort'))
+				: cleanFloat($(cols[5]).text())
+
+			// Валидация: Добавляем только если есть место и имя
+			if (rank > 0 && name) {
+				players.push({
+					rank,
+					player_name: name,
+					rating,
+					games_played: games,
+					wins,
+					win_rate: winRate,
+					updated_at: new Date().toISOString(),
 				})
-				.filter(p => p !== null && p.rank <= 100)
+			}
 		})
 
-		await browser.close()
-		console.log(`7. Done. Parsed ${players.length} players`) // ЛОГ 7
+		console.log(`3. Valid players parsed: ${players.length}`)
 
+		// --- СОХРАНЕНИЕ ---
 		if (players.length > 0) {
-			console.log('8. Saving to Supabase...') // ЛОГ 8
+			console.log(`4. Saving all ${players.length} players to DB...`)
+
 			const supabaseAdmin = createClient(
 				process.env.NEXT_PUBLIC_SUPABASE_URL!,
 				process.env.SUPABASE_SERVICE_ROLE_KEY!
 			)
 
+			// Upsert сохранит ВСЕХ (мы убрали .slice)
 			const { error } = await supabaseAdmin
 				.from('external_ratings')
 				.upsert(players, { onConflict: 'rank' })
 
-			if (error) throw error
-			console.log('9. Success!')
-			return NextResponse.json({ success: true, count: players.length })
+			if (error) {
+				console.error('DB Error:', error)
+				throw error
+			}
+
+			return NextResponse.json({
+				success: true,
+				count: players.length,
+				message: `Saved ${players.length} players to database`,
+			})
 		}
 
-		return NextResponse.json({ success: false, message: 'Empty table' })
+		return NextResponse.json({
+			success: false,
+			message: 'No players found',
+			pageTitle: $('title').text().trim(),
+		})
 	} catch (error: any) {
-		console.error('CRON ERROR:', error) // ЛОГ ОШИБКИ
+		console.error('Script Error:', error)
 		return NextResponse.json({ error: error.message }, { status: 500 })
 	}
 }

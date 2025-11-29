@@ -3,15 +3,21 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-export function Navigation() {
+// Добавляем пропс isAdmin
+export function Navigation({ isAdmin }: { isAdmin: boolean }) {
 	const pathname = usePathname()
 
 	const links = [
 		{ href: '/', label: 'Кабинет' },
 		{ href: '/picks', label: 'Таблица' },
 		{ href: '/stats', label: 'Статистика' },
-		{ href: '/bingo', label: 'Бинго' },
+		// { href: '/bingo', label: 'Бинго' },
 	]
+
+	// Если админ, добавляем ссылку
+	if (isAdmin) {
+		links.push({ href: '/admin', label: '⚙️ Админка' })
+	}
 
 	return (
 		<nav className='flex items-center gap-1 bg-gray-950/50 p-1 rounded-lg border border-gray-800'>

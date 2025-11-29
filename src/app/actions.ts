@@ -37,28 +37,40 @@ export async function signup(formData: FormData) {
 }
 
 export async function login(formData: FormData) {
-	const supabase = await createClient()
-	const loginInput = formData.get('login') as string // Может быть email или username
-	const password = formData.get('password') as string
+  const supabase = await createClient()
+  
+  // 1. Получаем данные из формы
+  const loginInput = formData.get('login') as string // Тут может быть ник или почта
+  const password = formData.get('password') as string
 
-	let email = loginInput
+  let email = loginInput
 
-	// Если введен не email (нет собачки), пробуем найти email по username
-	if (!loginInput.includes('@')) {
-		// Вызываем RPC функцию, которую мы создали в SQL (get_email_by_username)
-		const { data: foundEmail } = await supabase.rpc('get_email_by_username', {
-			uname: loginInput,
-		})
-		if (!foundEmail) return { error: 'Пользователь с таким ником не найден' }
-		email = foundEmail
-	}
+  // 2. Проверяем: если это НЕ email (нет собачки), значит это никнейм
+  if (!loginInput.includes('@')) {
+    // Вызываем нашу SQL функцию
+    const { data: foundEmail, error } = await supabase
+      .rpc('get_email_by_username', { uname: loginInput })
 
-	const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (!foundEmail || error) {
+      return { error: 'Пользователь с таким никнеймом не найден' }
+    }
+    
+    // Подменяем ник на найденный email
+    email = foundEmail
+  }
 
-	if (error) return { error: error.message }
+  // 3. Логинимся как обычно (Supabase всегда ждет email)
+  const { error } = await supabase.auth.signInWithPassword({ 
+    email: email, 
+    password 
+  })
 
-	revalidatePath('/', 'layout')
-	redirect('/')
+  if (error) {
+    return { error: 'Неверные данные для входа' } // Универсальная ошибка для безопасности
+  }
+
+  revalidatePath('/', 'layout')
+  redirect('/')
 }
 
 export async function signOut() {
@@ -275,3 +287,4 @@ export async function removeSelection(playerId: number) {
   revalidatePath('/picks')
   revalidatePath('/stats')
 }
+
