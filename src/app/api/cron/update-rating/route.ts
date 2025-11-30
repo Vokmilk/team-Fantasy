@@ -114,11 +114,21 @@ export async function GET(request: Request) {
 				console.error('DB Error:', error)
 				throw error
 			}
+			// --- НОВОЕ: 2. Синхронизируем цены в турнирах ---
+			console.log('5. Syncing tournament player costs...')
+			const { error: syncError } = await supabaseAdmin.rpc('sync_player_costs')
+
+			if (syncError) {
+				console.error('Sync Error:', syncError)
+				// Не падаем с ошибкой, так как рейтинг уже обновлен, просто логируем
+			} else {
+				console.log('Costs synced successfully.')
+			}
 
 			return NextResponse.json({
 				success: true,
 				count: players.length,
-				message: `Saved ${players.length} players to database`,
+				message: `Saved ${players.length} players to database and sync`,
 			})
 		}
 

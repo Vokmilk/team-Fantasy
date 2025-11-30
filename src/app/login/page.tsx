@@ -4,36 +4,94 @@ import { login, resetPassword, signup } from '@/app/actions'
 import { useState } from 'react'
 
 export default function LoginPage() {
-	// Добавили режим 'reset'
 	const [mode, setMode] = useState<'login' | 'signup' | 'reset'>('login')
 	const [message, setMessage] = useState('')
-	const [isSuccess, setIsSuccess] = useState(false) // Чтобы красить сообщение в зеленый
+	// Стейт для показа экрана успеха
+	const [showEmailSent, setShowEmailSent] = useState(false)
 
 	const handleSubmit = async (formData: FormData) => {
 		setMessage('')
-		setIsSuccess(false)
 
-		// Логика для восстановления пароля
+		// --- ЛОГИКА СБРОСА ПАРОЛЯ ---
 		if (mode === 'reset') {
 			const email = formData.get('email') as string
 			const res = await resetPassword(email)
 
 			if (res.success) {
-				setIsSuccess(true)
-				setMessage('Ссылка для сброса отправлена на ваш Email.')
+				// Показываем большой экран успеха
+				setShowEmailSent(true)
 			} else {
 				setMessage(res.error || 'Ошибка при отправке')
 			}
 			return
 		}
 
-		// Логика для Входа и Регистрации
+		// --- ЛОГИКА ВХОДА И РЕГИСТРАЦИИ ---
 		const action = mode === 'login' ? login : signup
 		const res = await action(formData)
-		if (res?.error) setMessage(res.error)
+
+		if (res?.error) {
+			setMessage(res.error)
+		} else if (mode === 'signup') {
+			// Показываем большой экран успеха после регистрации
+			setShowEmailSent(true)
+		}
 	}
 
-	// Заголовок формы
+	// --- ЭКРАН УСПЕХА (ОБЩИЙ ДЛЯ РЕГИСТРАЦИИ И СБРОСА) ---
+	if (showEmailSent) {
+		const isSignup = mode === 'signup'
+
+		return (
+			<div className='flex min-h-screen items-center justify-center bg-gray-950 text-white p-4'>
+				<div className='max-w-md w-full bg-gray-900 border border-gray-800 p-8 rounded-2xl shadow-2xl text-center'>
+					<div className='w-20 h-20 bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-6'>
+						{/* Иконка письма/галочки */}
+						<svg
+							className='w-10 h-10 text-green-500'
+							fill='none'
+							stroke='currentColor'
+							viewBox='0 0 24 24'
+						>
+							<path
+								strokeLinecap='round'
+								strokeLinejoin='round'
+								strokeWidth='2'
+								d='M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'
+							></path>
+						</svg>
+					</div>
+
+					<h1 className='text-3xl font-bold mb-4'>
+						{isSignup ? 'Письмо отправлено!' : 'Проверьте почту'}
+					</h1>
+
+					<p className='text-gray-400 mb-8 text-lg leading-relaxed'>
+						{isSignup
+							? 'Мы отправили ссылку для подтверждения регистрации.'
+							: 'Мы отправили ссылку для сброса пароля.'}
+						<br />
+						<span className='text-white font-medium block mt-2'>
+							Не забудьте проверить папку "Спам".
+						</span>
+					</p>
+
+					<button
+						onClick={() => {
+							setShowEmailSent(false)
+							setMode('login')
+							setMessage('')
+						}}
+						className='w-full bg-gray-800 hover:bg-gray-700 py-3 rounded-lg font-bold transition text-gray-200'
+					>
+						Вернуться ко входу
+					</button>
+				</div>
+			</div>
+		)
+	}
+
+	// --- ОБЫЧНАЯ ФОРМА ---
 	const getTitle = () => {
 		if (mode === 'login') return 'Вход'
 		if (mode === 'signup') return 'Регистрация'
@@ -91,7 +149,7 @@ export default function LoginPage() {
 					</>
 				)}
 
-				{/* --- ПОЛЯ ДЛЯ РЕГИСТРАЦИИ (Email нужен отдельно) --- */}
+				{/* --- ПОЛЯ ДЛЯ РЕГИСТРАЦИИ --- */}
 				{mode === 'signup' && (
 					<>
 						<input
@@ -114,7 +172,7 @@ export default function LoginPage() {
 				{/* --- ПОЛЯ ДЛЯ СБРОСА ПАРОЛЯ --- */}
 				{mode === 'reset' && (
 					<>
-						<p className='text-sm text-gray-400 text-center'>
+						<p className='text-sm text-gray-400 text-center mb-2'>
 							Введите email, указанный при регистрации. Мы отправим ссылку для
 							сброса.
 						</p>
@@ -128,7 +186,7 @@ export default function LoginPage() {
 					</>
 				)}
 
-				{/* --- КНОПКА ОТПРАВКИ --- */}
+				{/* --- КНОПКА ДЕЙСТВИЯ --- */}
 				<button className='bg-blue-600 py-3 rounded-lg font-bold hover:bg-blue-500 transition shadow-lg shadow-blue-900/20 mt-2'>
 					{mode === 'login'
 						? 'Войти'
@@ -137,7 +195,7 @@ export default function LoginPage() {
 						: 'Сбросить пароль'}
 				</button>
 
-				{/* --- ПЕРЕКЛЮЧЕНИЕ РЕЖИМОВ --- */}
+				{/* --- ПЕРЕКЛЮЧАТЕЛИ РЕЖИМОВ --- */}
 				<div className='text-center text-gray-400 text-sm mt-4 space-y-2'>
 					{mode === 'login' && (
 						<p>
@@ -185,15 +243,9 @@ export default function LoginPage() {
 					)}
 				</div>
 
-				{/* --- СООБЩЕНИЯ ОБ ОШИБКАХ/УСПЕХЕ --- */}
+				{/* --- ОШИБКИ (Успех теперь в отдельном экране) --- */}
 				{message && (
-					<div
-						className={`p-3 border rounded text-sm text-center ${
-							isSuccess
-								? 'bg-green-900/50 border-green-800 text-green-200'
-								: 'bg-red-900/50 border-red-800 text-red-200'
-						}`}
-					>
+					<div className='p-3 border rounded text-sm text-center bg-red-900/50 border-red-800 text-red-200'>
 						{message}
 					</div>
 				)}
