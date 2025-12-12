@@ -2,7 +2,7 @@
 
 import { saveUserPicks } from '@/app/actions'
 import { useMemo, useState, useTransition } from 'react'
-import { toast } from 'sonner' // <--- Импорт тоста
+import { toast } from 'sonner'
 import { SelectionCard } from './SelectionCard'
 import { StatsHeader } from './StatsHeader'
 
@@ -16,12 +16,13 @@ export function DashboardManager({
 	const [isPending, startTransition] = useTransition()
 	const [hasChanges, setHasChanges] = useState(false)
 
-	// 1. Расчет бюджета
+	// 1. Собираем всех игроков в плоский список для удобства расчетов
 	const allPlayers = useMemo(
 		() => baskets.flatMap((b: any) => b.players),
 		[baskets]
 	)
 
+	// 2. Расчет бюджета (на клиенте)
 	const spent = useMemo(() => {
 		return selectedIds.reduce((sum, id) => {
 			const p = allPlayers.find((pl: any) => pl.id === id)
@@ -31,8 +32,9 @@ export function DashboardManager({
 
 	const remaining = tournament.budget - spent
 
-	// 2. Логика Клика
+	// 3. Логика Клика
 	const handleToggle = (player: any) => {
+		// Если архивный турнир - ничего не делаем
 		if (!tournament.is_active) return
 
 		setSelectedIds(prev => {
@@ -40,42 +42,46 @@ export function DashboardManager({
 			setHasChanges(true)
 
 			if (isAlreadySelected) {
+				// Если кликнули по выбранному -> снимаем выбор
 				return prev.filter(id => id !== player.id)
 			} else {
-				// Удаляем старого игрока из этой же корзины (замена)
+				// Если кликнули по новому -> выбираем
+
+				// Находим игроков из текущей корзины, которые УЖЕ выбраны
+				// (чтобы заменить их, так как можно только 1 из корзины)
 				const currentBasketPlayerIds =
 					baskets
 						.find((b: any) => b.id === player.basket_id)
 						?.players.map((p: any) => p.id) || []
 
+				// Оставляем только тех, кто НЕ из этой корзины + добавляем нового
 				const otherPicks = prev.filter(
 					id => !currentBasketPlayerIds.includes(id)
 				)
+
 				return [...otherPicks, player.id]
 			}
 		})
 	}
 
-	// 3. Сохранение
+	// 4. Функция Сохранения
 	const handleSave = () => {
 		startTransition(async () => {
 			try {
 				const res = await saveUserPicks(tournament.id, selectedIds)
 				if (res?.success) {
 					setHasChanges(false)
-					// ВЫЗОВ ТОСТА
 					toast.success('Команда успешно сохранена! 🏆')
 				}
 			} catch (e: any) {
-				// Если ошибка пришла с сервера
-				toast.error(e.message)
+				toast.error(e.message) // Ошибка валидации с сервера
 			}
 		})
 	}
 
-	// 4. Сброс
+	// 5. Функция Сброса
 	const handleReset = () => {
-		if (confirm('Вернуть как было?')) {
+		if (confirm('Сбросить изменения и вернуть сохраненный состав?')) {
 			setSelectedIds(initialPicksIds)
 			setHasChanges(false)
 			toast.info('Изменения сброшены')
@@ -88,14 +94,25 @@ export function DashboardManager({
 	const isValid = isCountValid && isBudgetValid
 	const isReadOnly = !tournament.is_active
 
-	// Генерируем текст ошибки для подсказки
-	const getErrorTooltip = () => {
+	// Текст ошибки для подсказки и тоста
+	const getErrorText = () => {
 		if (!isCountValid)
-			return `Нужно выбрать 4 игроков (выбрано: ${selectedIds.length})`
+			return `Нужно выбрать 4 игроков (сейчас ${selectedIds.length})`
 		if (!isBudgetValid) return `Бюджет превышен на ${Math.abs(remaining)}`
 		return null
 	}
-	const errorTooltip = getErrorTooltip()
+	const errorText = getErrorText()
+
+	// --- ОБРАБОТЧИК КЛИКА ПО КНОПКЕ СОХРАНИТЬ ---
+	const handleSaveClick = () => {
+		// Если данные невалидны - показываем ошибку в тосте (для мобильных)
+		if (!isValid) {
+			toast.error(errorText || 'Ошибка валидации')
+			return
+		}
+		// Если всё ок - сохраняем
+		handleSave()
+	}
 
 	return (
 		<div className='space-y-6 pb-24'>
@@ -113,7 +130,11 @@ export function DashboardManager({
 						<div className='text-xs text-gray-500 font-medium'>
 							Выбрано:{' '}
 							<span
-								className={isCountValid ? 'text-green-400' : 'text-yellow-500'}
+								className={
+									selectedIds.length === 4
+										? 'text-green-400'
+										: 'text-yellow-500'
+								}
 							>
 								{selectedIds.length}/4
 							</span>
@@ -128,18 +149,24 @@ export function DashboardManager({
 							</button>
 						)}
 
-						{/* КНОПКА С ПОДСКАЗКОЙ */}
-						{/* Оборачиваем в div.group, чтобы показывать подсказку при наведении на весь блок, даже если кнопка disabled */}
+						{/* КНОПКА С УМНОЙ ВАЛИДАЦИЕЙ */}
 						<div className='relative group'>
 							<button
-								onClick={handleSave}
-								disabled={!hasChanges || isPending || !isValid}
+								onClick={handleSaveClick}
+								// Кнопка активна для клика, даже если !isValid (чтобы показать тост),
+								// но блокируется, если ничего не менялось или идет отправка.
+								disabled={!hasChanges || isPending}
 								className={`px-6 py-2.5 rounded-lg font-bold text-white shadow-lg transition-all flex items-center gap-2
                                     ${
 																			isValid && hasChanges
 																				? 'bg-green-600 hover:bg-green-500 hover:scale-[1.02] shadow-green-900/30'
-																				: 'bg-gray-800 text-gray-500 cursor-not-allowed opacity-70'
-																		}`}
+																				: 'bg-gray-800 text-gray-500 opacity-80 cursor-pointer' // Визуально "серая", но курсор pointer (для понимания интерактивности)
+																		}
+                                    ${
+																			(!hasChanges || isPending) &&
+																			'!cursor-not-allowed !opacity-50'
+																		} // Полный блок если нет изменений
+                                `}
 							>
 								{isPending
 									? 'Сохранение...'
@@ -148,14 +175,12 @@ export function DashboardManager({
 									: 'Сохранено'}
 							</button>
 
-							{/* САМА ПОДСКАЗКА (TOOLTIP) */}
-							{/* Показываем, только если есть ошибка и есть изменения (или кнопка неактивна из-за ошибки) */}
+							{/* Tooltip для Десктопа (появляется при наведении) */}
 							{hasChanges && !isValid && (
-								<div className='absolute right-0 top-full mt-2 w-max max-w-[250px] hidden group-hover:block z-50'>
+								<div className='absolute right-0 top-full mt-2 w-max max-w-[250px] hidden md:group-hover:block z-50 animate-in fade-in slide-in-from-top-2'>
 									<div className='bg-red-900 text-white text-xs px-3 py-2 rounded shadow-xl border border-red-700 relative'>
-										{/* Стрелочка вверх */}
 										<div className='absolute -top-1 right-6 w-2 h-2 bg-red-900 border-t border-l border-red-700 transform rotate-45'></div>
-										{errorTooltip}
+										{errorText}
 									</div>
 								</div>
 							)}
@@ -171,7 +196,6 @@ export function DashboardManager({
 						key={basket.id}
 						className='bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col shadow-lg'
 					>
-						{/* ... код корзины без изменений ... */}
 						<div className='bg-gray-800/50 p-3 border-b border-gray-700 flex justify-between items-center'>
 							<h3 className='font-bold text-base text-gray-200'>
 								{basket.name}
@@ -186,6 +210,7 @@ export function DashboardManager({
 								.sort((a: any, b: any) => b.cost - a.cost)
 								.map((player: any) => {
 									const isSelected = selectedIds.includes(player.id)
+									// Кнопки всегда активны для клика, кроме архивного режима
 									const isDisabled = isReadOnly
 
 									return (

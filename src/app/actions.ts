@@ -10,45 +10,49 @@ import { SelectionForBudget } from '@/types'
 
 export async function signup(formData: FormData) {
 	const supabase = await createClient()
+
+	// 1. Извлекаем данные
 	const email = formData.get('email') as string
 	const password = formData.get('password') as string
 	const username = formData.get('username') as string
 
-	// Проверка: занят ли такой username?
+	// 2. ВАЖНО: Проверяем, свободен ли никнейм
+	// (Supabase сам проверяет Email, но Никнейм мы должны проверить вручную)
 	const { data: existingUser } = await supabase
 		.from('profiles')
 		.select('id')
-		.eq('username', username)
+		.ilike('username', username) // ilike = регистронезависимый поиск (User = user)
 		.single()
 
 	if (existingUser) {
 		return { error: 'Пользователь с таким никнеймом уже существует' }
 	}
 
+	// 3. Определяем URL для перенаправления после клика в письме
 	const siteUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
 
-	const { data, error } = await supabase.auth.signUp({
+	// 4. Регистрация
+	const { error } = await supabase.auth.signUp({
 		email,
 		password,
 		options: {
-			data: { username }, // В метаданные
+			// Мы кладем username в 'data'.
+			// Наш SQL-триггер handle_new_user автоматически возьмет его отсюда
+			// и запишет в таблицу public.profiles при создании юзера.
+			data: {
+				username: username,
+				full_name: username, // Чтобы в админке Supabase тоже было красиво
+			},
 			emailRedirectTo: `${siteUrl}/auth/callback`,
 		},
 	})
 
-	if (error) return { error: error.message }
-
-	// ВАЖНО: Явно записываем username в таблицу profiles
-	if (data.user) {
-		await supabase
-			.from('profiles')
-			.update({ username: username })
-			.eq('id', data.user.id)
+	if (error) {
+		return { error: error.message }
 	}
 
 	return { success: true }
 }
-
 export async function login(formData: FormData) {
 	const supabase = await createClient()
 

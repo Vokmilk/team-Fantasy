@@ -48,7 +48,7 @@ export default async function TournamentEditPage({
 		.from('external_ratings')
 		.select('*')
 		.order('rank')
-		.limit(150)
+		.limit(200)
 
 	return (
 		<div className='max-w-[1600px] mx-auto p-4'>
