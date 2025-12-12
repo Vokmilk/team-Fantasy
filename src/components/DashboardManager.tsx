@@ -6,66 +6,104 @@ import { toast } from 'sonner'
 import { SelectionCard } from './SelectionCard'
 import { StatsHeader } from './StatsHeader'
 
+interface Player {
+	id: number
+	name: string
+	cost: number
+	points: number
+	basket_id: number
+}
+
+interface Basket {
+	id: number
+	name: string
+	allowed_picks: number
+	players: Player[]
+}
+
+interface Props {
+	userProfile: any
+	tournament: any
+	baskets: Basket[]
+	initialPicksIds: number[]
+}
+
 export function DashboardManager({
 	userProfile,
 	tournament,
 	baskets,
 	initialPicksIds,
-}: any) {
+}: Props) {
+	// 1. Инициализация состояния
 	const [selectedIds, setSelectedIds] = useState<number[]>(initialPicksIds)
 	const [isPending, startTransition] = useTransition()
 	const [hasChanges, setHasChanges] = useState(false)
 
-	// 1. Собираем всех игроков в плоский список для удобства расчетов
-	const allPlayers = useMemo(
-		() => baskets.flatMap((b: any) => b.players),
-		[baskets]
-	)
+	// 2. Расчет бюджета "на лету"
+	// Собираем всех игроков в плоский список для удобства поиска
+	const allPlayers = useMemo(() => baskets.flatMap(b => b.players), [baskets])
 
-	// 2. Расчет бюджета (на клиенте)
 	const spent = useMemo(() => {
 		return selectedIds.reduce((sum, id) => {
-			const p = allPlayers.find((pl: any) => pl.id === id)
+			const p = allPlayers.find(pl => pl.id === id)
 			return sum + (p?.cost || 0)
 		}, 0)
 	}, [selectedIds, allPlayers])
 
 	const remaining = tournament.budget - spent
 
-	// 3. Логика Клика
-	const handleToggle = (player: any) => {
-		// Если архивный турнир - ничего не делаем
-		if (!tournament.is_active) return
+	// 3. Статусы валидации
+	const isReadOnly = !tournament.is_active || tournament.is_registration_closed
+	const isCountValid = selectedIds.length === 4
+	const isBudgetValid = remaining >= 0
+	const isValid = isCountValid && isBudgetValid
+
+	// 4. Логика Клика (Выбор/Замена)
+	const handleToggle = (player: Player) => {
+		if (isReadOnly) return
 
 		setSelectedIds(prev => {
 			const isAlreadySelected = prev.includes(player.id)
 			setHasChanges(true)
 
 			if (isAlreadySelected) {
-				// Если кликнули по выбранному -> снимаем выбор
+				// Если кликнули по уже выбранному -> снимаем выбор
 				return prev.filter(id => id !== player.id)
 			} else {
-				// Если кликнули по новому -> выбираем
-
-				// Находим игроков из текущей корзины, которые УЖЕ выбраны
-				// (чтобы заменить их, так как можно только 1 из корзины)
+				// Если кликнули по новому:
+				// 1. Находим игроков из ЭТОЙ ЖЕ корзины, которые уже выбраны
 				const currentBasketPlayerIds =
 					baskets
-						.find((b: any) => b.id === player.basket_id)
-						?.players.map((p: any) => p.id) || []
+						.find(b => b.id === player.basket_id)
+						?.players.map(p => p.id) || []
 
-				// Оставляем только тех, кто НЕ из этой корзины + добавляем нового
+				// 2. Убираем их из списка (авто-замена)
 				const otherPicks = prev.filter(
 					id => !currentBasketPlayerIds.includes(id)
 				)
 
+				// 3. Добавляем нового
 				return [...otherPicks, player.id]
 			}
 		})
 	}
 
-	// 4. Функция Сохранения
-	const handleSave = () => {
+	// 5. Обработчик клика по кнопке "Сохранить"
+	// Используем паттерн "Ложно-неактивная кнопка" для мобильных
+	const handleSaveClick = () => {
+		// Если данные невалидны - показываем ошибку и не сохраняем
+		if (!isCountValid) {
+			toast.error(
+				`Нужно выбрать ровно 4 игрока! (Выбрано: ${selectedIds.length})`
+			)
+			return
+		}
+		if (!isBudgetValid) {
+			toast.error(`Бюджет превышен на ${Math.abs(remaining)}!`)
+			return
+		}
+
+		// Если все ок - отправляем на сервер
 		startTransition(async () => {
 			try {
 				const res = await saveUserPicks(tournament.id, selectedIds)
@@ -74,50 +112,32 @@ export function DashboardManager({
 					toast.success('Команда успешно сохранена! 🏆')
 				}
 			} catch (e: any) {
-				toast.error(e.message) // Ошибка валидации с сервера
+				toast.error(e.message)
 			}
 		})
 	}
 
-	// 5. Функция Сброса
+	// 6. Сброс изменений
 	const handleReset = () => {
-		if (confirm('Сбросить изменения и вернуть сохраненный состав?')) {
+		if (confirm('Вернуть как было до изменений?')) {
 			setSelectedIds(initialPicksIds)
 			setHasChanges(false)
 			toast.info('Изменения сброшены')
 		}
 	}
 
-	// --- ВАЛИДАЦИЯ ---
-	const isCountValid = selectedIds.length === 4
-	const isBudgetValid = remaining >= 0
-	const isValid = isCountValid && isBudgetValid
-	const isReadOnly = !tournament.is_active
-
-	// Текст ошибки для подсказки и тоста
-	const getErrorText = () => {
-		if (!isCountValid)
-			return `Нужно выбрать 4 игроков (сейчас ${selectedIds.length})`
-		if (!isBudgetValid) return `Бюджет превышен на ${Math.abs(remaining)}`
+	// Текст ошибки для Tooltip (ПК)
+	const getErrorTooltip = () => {
+		if (!isCountValid) return `Выберите 4 игроков`
+		if (!isBudgetValid) return `Бюджет превышен`
 		return null
 	}
-	const errorText = getErrorText()
-
-	// --- ОБРАБОТЧИК КЛИКА ПО КНОПКЕ СОХРАНИТЬ ---
-	const handleSaveClick = () => {
-		// Если данные невалидны - показываем ошибку в тосте (для мобильных)
-		if (!isValid) {
-			toast.error(errorText || 'Ошибка валидации')
-			return
-		}
-		// Если всё ок - сохраняем
-		handleSave()
-	}
+	const errorTooltip = getErrorTooltip()
 
 	return (
 		<div className='space-y-6 pb-24'>
-			{/* Sticky Header */}
-			<div className='sticky top-[60px] z-30 space-y-4 bg-gray-950/90 backdrop-blur pb-2 pt-2 border-b border-gray-800/50 -mx-4 px-4 md:mx-0 md:px-0'>
+			{/* Sticky Header (Прилипающая шапка с бюджетом и кнопкой) */}
+			<div className='sticky top-[60px] z-30 space-y-4 bg-gray-950/95 backdrop-blur pb-3 pt-2 border-b border-gray-800/50 -mx-4 px-4 md:mx-0 md:px-0 shadow-sm transition-all'>
 				<StatsHeader
 					username={userProfile?.username || userProfile?.email}
 					budget={tournament.budget}
@@ -127,14 +147,10 @@ export function DashboardManager({
 
 				{!isReadOnly && (
 					<div className='flex gap-3 justify-end items-center relative'>
-						<div className='text-xs text-gray-500 font-medium'>
+						<div className='text-xs text-gray-500 font-medium hidden sm:block'>
 							Выбрано:{' '}
 							<span
-								className={
-									selectedIds.length === 4
-										? 'text-green-400'
-										: 'text-yellow-500'
-								}
+								className={isCountValid ? 'text-green-400' : 'text-yellow-500'}
 							>
 								{selectedIds.length}/4
 							</span>
@@ -149,24 +165,19 @@ export function DashboardManager({
 							</button>
 						)}
 
-						{/* КНОПКА С УМНОЙ ВАЛИДАЦИЕЙ */}
+						{/* КНОПКА СОХРАНЕНИЯ С WRAPPER ДЛЯ TOOLTIP */}
 						<div className='relative group'>
 							<button
 								onClick={handleSaveClick}
-								// Кнопка активна для клика, даже если !isValid (чтобы показать тост),
-								// но блокируется, если ничего не менялось или идет отправка.
+								// Блокируем только если нет изменений или идет загрузка.
+								// Если есть ошибка валидации - кнопка остается кликабельной (чтобы показать тост)
 								disabled={!hasChanges || isPending}
 								className={`px-6 py-2.5 rounded-lg font-bold text-white shadow-lg transition-all flex items-center gap-2
                                     ${
 																			isValid && hasChanges
 																				? 'bg-green-600 hover:bg-green-500 hover:scale-[1.02] shadow-green-900/30'
-																				: 'bg-gray-800 text-gray-500 opacity-80 cursor-pointer' // Визуально "серая", но курсор pointer (для понимания интерактивности)
-																		}
-                                    ${
-																			(!hasChanges || isPending) &&
-																			'!cursor-not-allowed !opacity-50'
-																		} // Полный блок если нет изменений
-                                `}
+																				: 'bg-gray-800 text-gray-500 cursor-not-allowed opacity-80' // Визуально серая
+																		}`}
 							>
 								{isPending
 									? 'Сохранение...'
@@ -175,12 +186,12 @@ export function DashboardManager({
 									: 'Сохранено'}
 							</button>
 
-							{/* Tooltip для Десктопа (появляется при наведении) */}
+							{/* TOOLTIP (Только для ПК при наведении) */}
 							{hasChanges && !isValid && (
-								<div className='absolute right-0 top-full mt-2 w-max max-w-[250px] hidden md:group-hover:block z-50 animate-in fade-in slide-in-from-top-2'>
+								<div className='absolute right-0 top-full mt-2 w-max max-w-[200px] hidden md:group-hover:block z-50 animate-in fade-in slide-in-from-top-2'>
 									<div className='bg-red-900 text-white text-xs px-3 py-2 rounded shadow-xl border border-red-700 relative'>
 										<div className='absolute -top-1 right-6 w-2 h-2 bg-red-900 border-t border-l border-red-700 transform rotate-45'></div>
-										{errorText}
+										{errorTooltip}
 									</div>
 								</div>
 							)}
@@ -189,9 +200,9 @@ export function DashboardManager({
 				)}
 			</div>
 
-			{/* Сетка */}
+			{/* СЕТКА С КОРЗИНАМИ */}
 			<div className='grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6'>
-				{baskets?.map((basket: any) => (
+				{baskets?.map(basket => (
 					<div
 						key={basket.id}
 						className='bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col shadow-lg'
@@ -207,10 +218,11 @@ export function DashboardManager({
 
 						<div className='p-1 space-y-1 flex-1'>
 							{basket.players
-								.sort((a: any, b: any) => b.cost - a.cost)
-								.map((player: any) => {
+								.sort((a, b) => b.cost - a.cost)
+								.map(player => {
 									const isSelected = selectedIds.includes(player.id)
-									// Кнопки всегда активны для клика, кроме архивного режима
+									// Кнопки всегда активны для клика (кроме архива),
+									// чтобы можно было менять состав даже при нехватке бюджета (пока не нажмешь Сохранить)
 									const isDisabled = isReadOnly
 
 									return (

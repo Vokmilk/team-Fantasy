@@ -3,6 +3,10 @@
 		{
 			"path": "/api/cron/update-rating",
 			"schedule": "0 5 * * *"
+		},
+		{
+			"path": "/api/cron/sync-games",
+			"schedule": "0 5 * * *"
 		}
 	]
 }

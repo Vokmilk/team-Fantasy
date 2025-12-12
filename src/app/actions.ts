@@ -4,44 +4,41 @@ import { createClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { SelectionForBudget } from '@/types'
-
-// --- AUTHENTICATION ---
+// -----------------------------------------------------------------------------
+// AUTHENTICATION
+// -----------------------------------------------------------------------------
 
 export async function signup(formData: FormData) {
 	const supabase = await createClient()
 
-	// 1. Извлекаем данные
 	const email = formData.get('email') as string
 	const password = formData.get('password') as string
 	const username = formData.get('username') as string
 
-	// 2. ВАЖНО: Проверяем, свободен ли никнейм
-	// (Supabase сам проверяет Email, но Никнейм мы должны проверить вручную)
+	// 1. Проверяем, свободен ли никнейм
 	const { data: existingUser } = await supabase
 		.from('profiles')
 		.select('id')
-		.ilike('username', username) // ilike = регистронезависимый поиск (User = user)
+		.ilike('username', username)
 		.single()
 
 	if (existingUser) {
 		return { error: 'Пользователь с таким никнеймом уже существует' }
 	}
 
-	// 3. Определяем URL для перенаправления после клика в письме
+	// 2. Ссылка для подтверждения
 	const siteUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
 
-	// 4. Регистрация
+	// 3. Регистрация
 	const { error } = await supabase.auth.signUp({
 		email,
 		password,
 		options: {
-			// Мы кладем username в 'data'.
-			// Наш SQL-триггер handle_new_user автоматически возьмет его отсюда
-			// и запишет в таблицу public.profiles при создании юзера.
+			// Записываем username в метаданные.
+			// SQL-триггер handle_new_user автоматически перенесет его в таблицу profiles.
 			data: {
 				username: username,
-				full_name: username, // Чтобы в админке Supabase тоже было красиво
+				full_name: username,
 			},
 			emailRedirectTo: `${siteUrl}/auth/callback`,
 		},
@@ -53,6 +50,7 @@ export async function signup(formData: FormData) {
 
 	return { success: true }
 }
+
 export async function login(formData: FormData) {
 	const supabase = await createClient()
 
@@ -61,7 +59,7 @@ export async function login(formData: FormData) {
 
 	let email = loginInput
 
-	// Если это не email (нет собачки), ищем email по никнейму
+	// 1. Если введен не email (нет собачки), ищем email по никнейму через RPC
 	if (!loginInput.includes('@')) {
 		const { data: foundEmail, error } = await supabase.rpc(
 			'get_email_by_username',
@@ -74,6 +72,7 @@ export async function login(formData: FormData) {
 		email = foundEmail
 	}
 
+	// 2. Входим
 	const { error } = await supabase.auth.signInWithPassword({ email, password })
 
 	if (error) {
@@ -89,8 +88,6 @@ export async function signOut() {
 	await supabase.auth.signOut()
 	redirect('/login')
 }
-
-// --- PASSWORD RESET (ВОССТАНОВЛЕННЫЕ ФУНКЦИИ) ---
 
 export async function resetPassword(email: string) {
 	const supabase = await createClient()
@@ -119,102 +116,111 @@ export async function updatePassword(formData: FormData) {
 	redirect('/')
 }
 
-// --- FANTASY LOGIC (ТУРНИРЫ И БЮДЖЕТ) ---
+// -----------------------------------------------------------------------------
+// FANTASY LOGIC (USER SIDE)
+// -----------------------------------------------------------------------------
 
-export async function saveSelection(
-	tournamentId: number,
-	basketId: number,
-	playerId: number
-) {
+export async function saveUserPicks(tournamentId: number, playerIds: number[]) {
 	const supabase = await createClient()
 
+	// 1. Авторизация
 	const {
 		data: { user },
 	} = await supabase.auth.getUser()
 	if (!user) throw new Error('Unauthorized')
 
-	// 1. Получаем бюджет турнира
+	// 2. Получаем данные турнира (Бюджет + Статусы)
 	const { data: tournament } = await supabase
 		.from('tournaments')
-		.select('budget')
+		.select('budget, is_registration_closed, is_active')
 		.eq('id', tournamentId)
 		.single()
 
-	if (!tournament) throw new Error('Tournament not found')
+	if (!tournament) throw new Error('Турнир не найден')
 
-	// 2. Получаем стоимость нового игрока
-	const { data: newPlayer } = await supabase
-		.from('players')
-		.select('cost')
-		.eq('id', playerId)
-		.single()
-
-	// 3. Считаем текущие расходы, ИСКЛЮЧАЯ текущую корзину (так как мы заменяем игрока в ней)
-	// Нам нужно найти все пики юзера в этом турнире
-	const { data: allPicksData } = await supabase // Переименуем переменную в allPicksData
-		.from('selections')
-		.select('players!inner(id, basket_id, cost, baskets!inner(tournament_id))')
-		.eq('user_id', user.id)
-		.eq('players.baskets.tournament_id', tournamentId)
-
-	// ЯВНОЕ ПРИВЕДЕНИЕ ТИПА:
-	// Мы говорим: "Данные, которые пришли, точно соответствуют этому интерфейсу"
-	const allPicks = allPicksData as unknown as SelectionForBudget[]
-
-	let currentSpent = 0
-
-	// Теперь TS знает, что p.players - это объект, и ошибки исчезнут
-	allPicks?.forEach(p => {
-		if (p.players.basket_id !== basketId) {
-			currentSpent += p.players.cost
-		}
-	})
-
-	// 4. Проверяем бюджет
-	const newTotal = currentSpent + (newPlayer?.cost || 0)
-	if (newTotal > tournament.budget) {
-		throw new Error(
-			`Превышен бюджет! Доступно: ${
-				tournament.budget - currentSpent
-			}, Цена игрока: ${newPlayer?.cost}`
-		)
+	// ПРОВЕРКА БЕЗОПАСНОСТИ: Закрыта ли регистрация?
+	if (tournament.is_registration_closed) {
+		throw new Error('Регистрация завершена. Изменения не сохранены.')
+	}
+	if (!tournament.is_active) {
+		throw new Error('Турнир находится в архиве.')
 	}
 
-	// 5. Логика замены: Удаляем старый выбор из этой корзины (если есть)
-	// Получаем ID игроков, которые принадлежат этой корзине
-	const { data: basketPlayers } = await supabase
+	// 3. Получаем данные выбранных игроков из БД (цену и корзину)
+	// Важно брать цену с сервера, а не верить клиенту
+	const { data: players } = await supabase
+		.from('players')
+		.select('id, cost, basket_id')
+		.in('id', playerIds)
+
+	if (!players || players.length !== playerIds.length) {
+		throw new Error('Ошибка данных игроков (кто-то не найден)')
+	}
+
+	// 4. ВАЛИДАЦИЯ
+	// А. Количество
+	if (players.length !== 4) {
+		throw new Error(`Нужно выбрать ровно 4 игрока! Выбрано: ${players.length}`)
+	}
+
+	// Б. Уникальность корзин (1 игрок из каждой корзины)
+	const baskets = new Set(players.map(p => p.basket_id))
+	if (baskets.size !== 4) {
+		throw new Error('Нужно выбрать по одному игроку из каждой корзины!')
+	}
+
+	// В. Бюджет
+	const totalCost = players.reduce((sum, p) => sum + p.cost, 0)
+	if (totalCost > tournament.budget) {
+		throw new Error(`Бюджет превышен! (${totalCost} / ${tournament.budget})`)
+	}
+
+	// 5. СОХРАНЕНИЕ
+	// Нам нужно перезаписать выбор для ЭТОГО турнира.
+	// Самый надежный способ: найти все корзины этого турнира -> удалить пики игроков из этих корзин -> вставить новые.
+
+	const { data: tournamentBaskets } = await supabase
+		.from('baskets')
+		.select('id')
+		.eq('tournament_id', tournamentId)
+
+	const basketIds = tournamentBaskets?.map(b => b.id) || []
+
+	// Находим ID всех игроков, которые участвуют в этом турнире (чтобы удалить старые пики)
+	const { data: playersInTournament } = await supabase
 		.from('players')
 		.select('id')
-		.eq('basket_id', basketId)
+		.in('basket_id', basketIds)
 
-	const basketPlayerIds = basketPlayers?.map(p => p.id) || []
+	const idsToDelete = playersInTournament?.map(p => p.id) || []
 
-	if (basketPlayerIds.length > 0) {
-		// Удаляем выбор, если player_id входит в список игроков этой корзины
+	if (idsToDelete.length > 0) {
+		// Удаляем старые пики пользователя в этом турнире
 		await supabase
 			.from('selections')
 			.delete()
 			.eq('user_id', user.id)
-			.in('player_id', basketPlayerIds)
+			.in('player_id', idsToDelete)
 	}
 
-	// 6. Сохраняем новый выбор
-	const { error } = await supabase.from('selections').insert({
+	// Вставляем новые пики
+	const newSelections = playerIds.map(id => ({
 		user_id: user.id,
-		player_id: playerId,
-	})
+		player_id: id,
+	}))
+
+	const { error } = await supabase.from('selections').insert(newSelections)
 
 	if (error) throw new Error(error.message)
 
+	// Обновляем кэш страниц
 	revalidatePath('/')
 	revalidatePath('/picks')
-	revalidatePath('/stats')
+
+	return { success: true }
 }
 
-// ... импорты
-
-// --- BINGO LOGIC ---
-
+// Функции для Бинго (если используются)
 export async function saveBingoTicket(
 	tournamentId: number,
 	selectedOptionIds: number[]
@@ -225,12 +231,10 @@ export async function saveBingoTicket(
 	} = await supabase.auth.getUser()
 	if (!user) return { error: 'Unauthorized' }
 
-	// Валидация
 	if (selectedOptionIds.length !== 15) {
 		return { error: 'Необходимо выбрать ровно 15 событий!' }
 	}
 
-	// 1. Создаем билет
 	const { data: ticket, error: ticketError } = await supabase
 		.from('bingo_tickets')
 		.insert({ user_id: user.id, tournament_id: tournamentId })
@@ -243,7 +247,6 @@ export async function saveBingoTicket(
 		return { error: ticketError.message }
 	}
 
-	// 2. Добавляем опции
 	const selections = selectedOptionIds.map(optId => ({
 		ticket_id: ticket.id,
 		option_id: optId,
@@ -259,14 +262,13 @@ export async function saveBingoTicket(
 	return { success: true }
 }
 
-// --- ADMIN BINGO (Для тестов) ---
+// Админская функция для Бинго (если нужно)
 export async function toggleBingoEvent(
 	optionId: number,
 	currentState: boolean
 ) {
 	const supabase = await createClient()
-
-	// В реальном проекте тут нужна проверка на админа!
+	// Тут в реальном проекте стоит проверить роль админа
 	await supabase
 		.from('bingo_options')
 		.update({
@@ -276,113 +278,4 @@ export async function toggleBingoEvent(
 		.eq('id', optionId)
 
 	revalidatePath('/bingo')
-}
-
-export async function removeSelection(playerId: number) {
-	const supabase = await createClient()
-
-	const {
-		data: { user },
-	} = await supabase.auth.getUser()
-	if (!user) throw new Error('Unauthorized')
-
-	// Удаляем конкретный выбор
-	const { error } = await supabase
-		.from('selections')
-		.delete()
-		.eq('user_id', user.id)
-		.eq('player_id', playerId)
-
-	if (error) throw new Error(error.message)
-
-	revalidatePath('/')
-	revalidatePath('/picks')
-	revalidatePath('/stats')
-}
-
-export async function saveUserPicks(tournamentId: number, playerIds: number[]) {
-	const supabase = await createClient()
-	const {
-		data: { user },
-	} = await supabase.auth.getUser()
-	if (!user) throw new Error('Unauthorized')
-
-	// 1. Получаем данные о турнире и выбранных игроках из БД (не доверяем клиенту)
-	const { data: tournament } = await supabase
-		.from('tournaments')
-		.select('budget')
-		.eq('id', tournamentId)
-		.single()
-
-	if (!tournament) throw new Error('Турнир не найден')
-
-	// Получаем реальные данные игроков (цену и корзину)
-	const { data: players } = await supabase
-		.from('players')
-		.select('id, cost, basket_id')
-		.in('id', playerIds)
-
-	if (!players || players.length !== playerIds.length) {
-		throw new Error('Ошибка данных игроков')
-	}
-
-	// 2. ВАЛИДАЦИЯ
-	// А. Проверка количества (должно быть 4)
-	if (players.length !== 4) {
-		throw new Error(`Нужно выбрать ровно 4 игрока! Выбрано: ${players.length}`)
-	}
-
-	// Б. Проверка уникальности корзин (1 игрок из каждой корзины)
-	const baskets = new Set(players.map(p => p.basket_id))
-	if (baskets.size !== 4) {
-		throw new Error('Нужно выбрать по одному игроку из каждой корзины!')
-	}
-
-	// В. Проверка бюджета
-	const totalCost = players.reduce((sum, p) => sum + p.cost, 0)
-	if (totalCost > tournament.budget) {
-		throw new Error(`Бюджет превышен! (${totalCost} / ${tournament.budget})`)
-	}
-
-	// 3. СОХРАНЕНИЕ
-	// Нам нужно удалить старые пики ЭТОГО турнира и вставить новые.
-
-	// Получаем ID всех корзин этого турнира, чтобы найти старые пики
-	const { data: tournamentBaskets } = await supabase
-		.from('baskets')
-		.select('id')
-		.eq('tournament_id', tournamentId)
-
-	const basketIds = tournamentBaskets?.map(b => b.id) || []
-
-	// Удаляем старые выборы, которые ссылаются на игроков из этих корзин
-	// (Это немного сложно в SQL через Supabase JS, поэтому делаем в два шага:
-	// находим игроков турнира -> удаляем selections с ними)
-	const { data: playersInTournament } = await supabase
-		.from('players')
-		.select('id')
-		.in('basket_id', basketIds)
-
-	const idsToDelete = playersInTournament?.map(p => p.id) || []
-
-	if (idsToDelete.length > 0) {
-		await supabase
-			.from('selections')
-			.delete()
-			.eq('user_id', user.id)
-			.in('player_id', idsToDelete)
-	}
-
-	// Вставляем новые
-	const newSelections = playerIds.map(id => ({
-		user_id: user.id,
-		player_id: id,
-	}))
-
-	const { error } = await supabase.from('selections').insert(newSelections)
-	if (error) throw new Error(error.message)
-
-	revalidatePath('/')
-	revalidatePath('/picks')
-	return { success: true }
 }

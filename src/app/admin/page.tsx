@@ -1,28 +1,25 @@
-import { createTournament } from '@/app/admin/action'
 import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { createTournament } from './actions'
 
 export const revalidate = 0
 
 export default async function AdminPage() {
 	const supabase = await createClient()
 
-	// 1. Получаем текущего юзера
+	// 1. Проверка админа
 	const {
 		data: { user },
 	} = await supabase.auth.getUser()
 	if (!user) redirect('/login')
 
-	// 2. ПРОВЕРКА АДМИНА ЧЕРЕЗ БАЗУ
-	// Запрашиваем профиль и проверяем флаг is_admin
 	const { data: profile } = await supabase
 		.from('profiles')
 		.select('is_admin')
 		.eq('id', user.id)
 		.single()
 
-	// Если не админ — показываем 404 или ошибку
 	if (!profile || !profile.is_admin) {
 		return (
 			<div className='flex items-center justify-center min-h-screen text-red-500 font-bold text-xl'>
@@ -31,6 +28,7 @@ export default async function AdminPage() {
 		)
 	}
 
+	// 2. Получаем список турниров
 	const { data: tournaments } = await supabase
 		.from('tournaments')
 		.select('*')
@@ -48,21 +46,35 @@ export default async function AdminPage() {
 						'use server'
 						await createTournament(
 							fd.get('name') as string,
-							Number(fd.get('budget'))
+							Number(fd.get('budget')),
+							fd.get('slug') as string // <--- 3-й аргумент (Slug)
 						)
 					}}
-					className='flex gap-4 items-end'
+					className='flex flex-col md:flex-row gap-4 items-end'
 				>
-					<div className='flex-1'>
+					<div className='flex-1 w-full'>
 						<label className='block text-sm text-gray-400 mb-1'>Название</label>
 						<input
 							name='name'
 							className='input-dark w-full'
-							placeholder='Сезон 3'
+							placeholder='Зимний кубок'
 							required
 						/>
 					</div>
-					<div className='w-32'>
+
+					<div className='flex-1 w-full'>
+						<label className='block text-sm text-gray-400 mb-1'>
+							Slug (URL)
+						</label>
+						<input
+							name='slug'
+							className='input-dark w-full'
+							placeholder='winter-cup-2025'
+							required
+						/>
+					</div>
+
+					<div className='w-full md:w-32'>
 						<label className='block text-sm text-gray-400 mb-1'>Бюджет</label>
 						<input
 							name='budget'
@@ -72,13 +84,14 @@ export default async function AdminPage() {
 							required
 						/>
 					</div>
-					<button className='bg-green-600 px-6 py-3 rounded-lg font-bold hover:bg-green-500'>
+
+					<button className='bg-green-600 px-6 py-2.5 rounded-lg font-bold hover:bg-green-500 w-full md:w-auto'>
 						Создать
 					</button>
 				</form>
 			</div>
 
-			{/* Список */}
+			{/* Список турниров */}
 			<div className='space-y-4'>
 				{tournaments?.map(t => (
 					<div
@@ -98,13 +111,17 @@ export default async function AdminPage() {
 									</span>
 								)}
 							</div>
-							<div className='text-gray-500 text-sm'>Бюджет: {t.budget}</div>
+							<div className='text-gray-500 text-xs mt-1'>
+								Slug:{' '}
+								<span className='font-mono text-yellow-600'>{t.slug}</span> |
+								Бюджет: {t.budget}
+							</div>
 						</div>
 						<Link
 							href={`/admin/tournament/${t.id}`}
-							className='bg-blue-600 px-4 py-2 rounded hover:bg-blue-500 transition'
+							className='bg-blue-600 px-4 py-2 rounded hover:bg-blue-500 transition text-sm font-medium'
 						>
-							Редактировать состав →
+							Редактировать →
 						</Link>
 					</div>
 				))}

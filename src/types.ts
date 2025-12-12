@@ -43,6 +43,7 @@ export interface PlayerDashboard {
 	name: string
 	cost: number
 	points: number
+	 basket_id: number; 
 }
 
 /**
